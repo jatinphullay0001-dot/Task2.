@@ -1,0 +1,454 @@
+import React, { useCallback, useEffect, useState } from "react";
+import ReactDOM from "react-dom/client";
+import {
+  api, getToken, setToken, clearToken,
+  STAGES, SOURCES, stageLabel, formatDate, dateInput, isOverdue, money,
+} from "./api";
+
+/* ============================================================
+   Login
+   ============================================================ */
+function Login({ onSignedIn }) {
+  const [email, setEmail] = useState("admin@leaddesk.dev");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setError("");
+    setBusy(true);
+    try {
+      const { token, user } = await api.login(email, password);
+      setToken(token);
+      onSignedIn(user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="gate">
+      <div className="gate-box">
+        <h1>Lead Desk</h1>
+        <p className="sub">Sign in to work through the leads coming off your website.</p>
+        <p className="err">{error}</p>
+        <div className="field">
+          <label htmlFor="email">Email</label>
+          <input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="password">Password</label>
+          <input
+            id="password" type="password" value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        </div>
+        <button className="btn btn-wide" onClick={submit} disabled={busy}>
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+        <p className="hint">Seeded account: admin@leaddesk.dev / admin123</p>
+      </div>
+    </div>
+  );
+}
+
+/* ============================================================
+   Lead table
+   ============================================================ */
+function LeadTable({ leads, loading, selectedId, onSelect, onAdd }) {
+  if (loading) return <p className="empty">Loading leads…</p>;
+
+  if (!leads.length) {
+    return (
+      <div className="empty">
+        <h3>No leads match this view</h3>
+        <p>Clear the filters, or add the lead yourself.</p>
+        <button className="btn" onClick={onAdd}>Add a lead</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Lead</th><th>Company</th><th>Source</th>
+            <th>Status</th><th>Value</th><th>Follow-up</th><th>Added</th>
+          </tr>
+        </thead>
+        <tbody>
+          {leads.map((lead) => (
+            <tr key={lead._id} aria-selected={selectedId === lead._id} onClick={() => onSelect(lead._id)}>
+              <td>
+                <div className="nm">{lead.name}</div>
+                <div className="sub">{lead.email}</div>
+              </td>
+              <td>{lead.company || "—"}</td>
+              <td className="sub">{lead.source}</td>
+              <td>
+                <span className={`pill ${lead.status}`}>
+                  <span className={`lamp ${lead.status}`} />{stageLabel(lead.status)}
+                </span>
+              </td>
+              <td className="num">{money(lead.value)}</td>
+              <td className={`num${isOverdue(lead) ? " over" : ""}`}>
+                {lead.followUpDate
+                  ? `${formatDate(lead.followUpDate)}${isOverdue(lead) ? " · overdue" : ""}`
+                  : "—"}
+              </td>
+              <td className="num sub">{formatDate(lead.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/* ============================================================
+   Add / edit form
+   ============================================================ */
+function LeadForm({ lead, onSave, onCancel }) {
+  const isNew = !lead._id;
+  const [form, setForm] = useState({
+    name: lead.name || "",
+    email: lead.email || "",
+    phone: lead.phone || "",
+    company: lead.company || "",
+    source: lead.source || "Contact form",
+    status: lead.status || "new",
+    value: lead.value || "",
+    followUpDate: dateInput(lead.followUpDate),
+    note: "",
+  });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const set = (key) => (e) => setForm({ ...form, [key]: e.target.value });
+
+  const submit = async () => {
+    if (!form.name.trim()) return setError("Add a name so you know who to call.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) return setError("Enter a valid email address.");
+    setBusy(true);
+    try {
+      await onSave({ ...form, value: Number(form.value) || 0, followUpDate: form.followUpDate || null });
+    } catch (err) {
+      setError(err.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="scrim" onClick={onCancel} />
+      <div className="modal" role="dialog" aria-label={isNew ? "Add a lead" : "Edit lead"}>
+        <h2>{isNew ? "Add a lead" : "Edit lead"}</h2>
+        <p className="err">{error}</p>
+        <div className="grid2">
+          <div className="field">
+            <label htmlFor="f_name">Full name</label>
+            <input id="f_name" value={form.name} onChange={set("name")} autoFocus />
+          </div>
+          <div className="field">
+            <label htmlFor="f_email">Email</label>
+            <input id="f_email" type="email" value={form.email} onChange={set("email")} />
+          </div>
+          <div className="field">
+            <label htmlFor="f_phone">Phone</label>
+            <input id="f_phone" value={form.phone} onChange={set("phone")} />
+          </div>
+          <div className="field">
+            <label htmlFor="f_company">Company</label>
+            <input id="f_company" value={form.company} onChange={set("company")} />
+          </div>
+          <div className="field">
+            <label htmlFor="f_source">Source</label>
+            <select id="f_source" value={form.source} onChange={set("source")}>
+              {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="f_status">Status</label>
+            <select id="f_status" value={form.status} onChange={set("status")}>
+              {STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="f_value">Estimated value (₹)</label>
+            <input id="f_value" type="number" min="0" value={form.value} onChange={set("value")} />
+          </div>
+          <div className="field">
+            <label htmlFor="f_follow">Next follow-up</label>
+            <input id="f_follow" type="date" value={form.followUpDate} onChange={set("followUpDate")} />
+          </div>
+        </div>
+        {isNew && (
+          <div className="field">
+            <label htmlFor="f_note">Opening note</label>
+            <textarea id="f_note" value={form.note} onChange={set("note")}
+              placeholder="Optional — what did they ask for?" />
+          </div>
+        )}
+        <div className="actions">
+          <button className="btn" onClick={submit} disabled={busy}>
+            {busy ? "Saving…" : isNew ? "Add lead" : "Save changes"}
+          </button>
+          <button className="btn btn-ghost" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ============================================================
+   Detail panel — status, follow-up date, note timeline
+   ============================================================ */
+function LeadDetail({ id, onClose, onChanged, onEdit, onDelete }) {
+  const [lead, setLead] = useState(null);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.getLead(id).then(setLead).catch((err) => setError(err.message));
+  }, [id]);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const patch = async (fields) => {
+    try {
+      setLead(await api.updateLead(id, fields));
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const addNote = async () => {
+    if (!note.trim()) return;
+    try {
+      setLead(await api.addNote(id, { body: note }));
+      setNote("");
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  if (!lead) {
+    return (
+      <>
+        <div className="scrim" onClick={onClose} />
+        <aside className="panel"><p className="empty">{error || "Loading…"}</p></aside>
+      </>
+    );
+  }
+
+  const notes = [...lead.notes].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+
+  return (
+    <>
+      <div className="scrim" onClick={onClose} />
+      <aside className="panel" role="dialog" aria-label="Lead details">
+        <header className="panel-head">
+          <button className="x" onClick={onClose} aria-label="Close">&times;</button>
+          <h2>{lead.name}</h2>
+          <div className="sub">{lead.company || "No company on file"}</div>
+        </header>
+
+        <div className="panel-body">
+          <p className="err">{error}</p>
+          <dl className="meta">
+            <dt>Email</dt><dd><a href={`mailto:${lead.email}`}>{lead.email}</a></dd>
+            <dt>Phone</dt><dd>{lead.phone || "—"}</dd>
+            <dt>Source</dt><dd>{lead.source}</dd>
+            <dt>Value</dt><dd>{money(lead.value)}</dd>
+            <dt>Added</dt><dd>{formatDate(lead.createdAt)}</dd>
+          </dl>
+
+          <div className="row">
+            <div className="field">
+              <label htmlFor="d_status">Status</label>
+              <select id="d_status" value={lead.status} onChange={(e) => patch({ status: e.target.value })}>
+                {STAGES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="d_follow">Next follow-up</label>
+              <input id="d_follow" type="date" value={dateInput(lead.followUpDate)}
+                onChange={(e) => patch({ followUpDate: e.target.value || null })} />
+            </div>
+          </div>
+          {isOverdue(lead) && <p className="err">This follow-up was due {formatDate(lead.followUpDate)}.</p>}
+
+          <section className="sec">
+            <h3>Notes and follow-ups</h3>
+            <div className="field">
+              <textarea value={note} onChange={(e) => setNote(e.target.value)}
+                placeholder="What happened on this call, email, or meeting?" />
+            </div>
+            <button className="btn" onClick={addNote}>Add note</button>
+
+            <div className="notes">
+              {notes.length ? notes.map((n) => (
+                <div className="note" key={n._id}>
+                  <time>{formatDate(n.createdAt)}</time>
+                  <p>{n.body}</p>
+                </div>
+              )) : <p className="sub">Nothing logged yet. Add the first note after you reach out.</p>}
+            </div>
+          </section>
+        </div>
+
+        <footer className="panel-foot">
+          <button className="btn btn-ghost" onClick={() => onEdit(lead)}>Edit details</button>
+          <button className="btn btn-danger" onClick={() => onDelete(lead._id)}>Delete lead</button>
+        </footer>
+      </aside>
+    </>
+  );
+}
+
+/* ============================================================
+   Dashboard
+   ============================================================ */
+function Dashboard({ user, onSignOut }) {
+  const [leads, setLeads] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [status, setStatus] = useState("all");
+  const [source, setSource] = useState("all");
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ leads }, s] = await Promise.all([
+        api.listLeads({ status, source, search }),
+        api.stats(),
+      ]);
+      setLeads(leads);
+      setStats(s);
+      setError("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [status, source, search]);
+
+  // Debounced so typing in the search box doesn't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(refresh, search ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [refresh, search]);
+
+  const saveLead = async (payload) => {
+    if (editing?._id) await api.updateLead(editing._id, payload);
+    else await api.createLead(payload);
+    setEditing(null);
+    refresh();
+  };
+
+  const removeLead = async (id) => {
+    if (!confirm("Delete this lead and its notes? This cannot be undone.")) return;
+    await api.deleteLead(id);
+    setSelectedId(null);
+    refresh();
+  };
+
+  return (
+    <div className="shell">
+      <aside className="rail">
+        <div className="brand"><b>Lead Desk</b><span>Mini CRM</span></div>
+        <nav>
+          <button className="stage" aria-pressed={status === "all"} onClick={() => setStatus("all")}>
+            <span className="lamp" />All leads<span className="n">{stats?.total ?? "—"}</span>
+          </button>
+          {STAGES.map((s) => (
+            <button key={s.id} className="stage" aria-pressed={status === s.id} onClick={() => setStatus(s.id)}>
+              <span className={`lamp ${s.id}`} />{s.label}
+              <span className="n">{stats?.byStatus?.[s.id] ?? "—"}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="rail-foot">
+          <span className="who">{user.name}</span>
+          <button className="linkish" onClick={onSignOut}>Sign out</button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <h1>
+            {status === "all" ? "All leads" : stageLabel(status)}
+            <em>
+              {leads.length} shown
+              {stats?.overdue ? ` · ${stats.overdue} follow-up${stats.overdue > 1 ? "s" : ""} overdue` : ""}
+            </em>
+          </h1>
+          <input className="search" placeholder="Search name, email, company"
+            value={search} onChange={(e) => setSearch(e.target.value)} />
+          <select className="filter" value={source} onChange={(e) => setSource(e.target.value)}>
+            <option value="all">Every source</option>
+            {SOURCES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <button className="btn" onClick={() => setEditing({})}>Add lead</button>
+        </header>
+
+        {error && <p className="err banner">{error}</p>}
+
+        <LeadTable leads={leads} loading={loading} selectedId={selectedId}
+          onSelect={setSelectedId} onAdd={() => setEditing({})} />
+      </main>
+
+      {selectedId && (
+        <LeadDetail id={selectedId} onClose={() => setSelectedId(null)} onChanged={refresh}
+          onEdit={setEditing} onDelete={removeLead} />
+      )}
+
+      {editing && <LeadForm lead={editing} onSave={saveLead} onCancel={() => setEditing(null)} />}
+    </div>
+  );
+}
+
+/* ============================================================
+   App root — holds the signed-in user
+   ============================================================ */
+function App() {
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Restore the session on refresh if the stored token is still valid.
+  useEffect(() => {
+    if (!getToken()) return setLoading(false);
+    api.me()
+      .then(({ user }) => setUser(user))
+      .catch(() => clearToken())
+      .finally(() => setLoading(false));
+  }, []);
+
+  const signOut = () => {
+    clearToken();
+    setUser(null);
+  };
+
+  if (loading) return <div className="empty">Loading your leads…</div>;
+  return user ? <Dashboard user={user} onSignOut={signOut} /> : <Login onSignedIn={setUser} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
